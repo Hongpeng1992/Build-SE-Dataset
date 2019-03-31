@@ -33,9 +33,9 @@ def load_wavs(file_paths, limit=None, sr=16000, minimum_sampling=0):
     if not limit:
         limit = len(file_paths)
 
-    print("Loading wavs ...")
+    print("Loading wav files ...")
     while i < limit:
-        print(f"Wav index: {i}")
+        print(f"Wav file: {i + 1}")
         wav, _ = librosa.load(file_paths[i], sr=sr)
         if len(wav) >= minimum_sampling:
             wavs.append(wav)
@@ -128,47 +128,43 @@ def main(config):
     random.shuffle(timit_wav_paths)  # select wav file randomly
     clean_ys = load_wavs(
         timit_wav_paths,
-        limit=config["test"]["num_of_utterance"],
+        limit=config["num_of_utterances"],
         minimum_sampling=config["minimum_sampling"]
     )
 
-    noisex92_wav_paths_list = [p for p in glob.glob(noisex92_data_dir.as_posix() + "/*.wav")]
-    test_noise_paths = [p for p in noisex92_wav_paths_list if get_name_and_ext(p)[0] in config["test"]["noise_types"]]
-    noise_ys_dict = load_noises(test_noise_paths)
+    train_clean_ys_len = int(config["num_of_utterances"] * config["split"])
+    test_clean_ys_len = config["num_of_utterances"] - train_clean_ys_len
+    print(f"The total number of wav files in the training set is: {train_clean_ys_len}.")
+    print(f"The total number of wav files in the test set is: {test_clean_ys_len}. \n")
 
+    train_clean_ys = clean_ys[:train_clean_ys_len]
+    test_clean_ys = clean_ys[train_clean_ys_len:]
+
+    noisex92_wav_paths_list = [p for p in glob.glob(noisex92_data_dir.as_posix() + "/*.wav")]
+
+    print("Building training set:")
+    train_noise_paths = [p for p in noisex92_wav_paths_list if get_name_and_ext(p)[0] in config["train"]["noise_types"]]
+    train_store = add_noise_for_wavs(  # Build train dataset
+        noise_ys_dict=load_noises(train_noise_paths),
+        clean_ys=train_clean_ys,
+        dbs=config["train"]["dbs"],
+        output_dir=release_dir_for_train
+    )
+    print(f"Build training dataset finished, the result is stored in {release_dir_for_train}. \n")
+
+    print("Building test set:")
+    test_noise_paths = [p for p in noisex92_wav_paths_list if get_name_and_ext(p)[0] in config["test"]["noise_types"]]
     test_store = add_noise_for_wavs(  # Build test dataset
-        noise_ys_dict=noise_ys_dict,
-        clean_ys=clean_ys,
+        noise_ys_dict=load_noises(test_noise_paths),
+        clean_ys=test_clean_ys,
         dbs=config["test"]["dbs"],
         output_dir=release_dir_for_test
     )
+    print(f"Build test dataset finished, the result is stored in {release_dir_for_test}. \n")
 
-    paths_of_test_clean_wav = sorted(glob.glob((release_dir_for_test / "clean").as_posix() + "/*.wav"))
-    paths_of_test_noisy_wav = sorted(glob.glob((release_dir_for_test / "noisy").as_posix() + "/*.wav"))
-
-    print("Build test dataset finish.")
-    print("Select train dataset from test dataset...")
-
-    # select train from test database
-    train_basename_texts = []
-    for i in range(config["train"]["num_of_utterance"]):
-        for noisy_type in config["train"]["noise_types"]:
-            for db in config["train"]["dbs"]:
-                train_basename_texts.append(f"{str(i + 1).zfill(4)}_{noisy_type}_{db}")
-
-    train_store = {}
-    for clean_wav_path, noisy_wav_path in zip(paths_of_test_clean_wav, paths_of_test_noisy_wav):
-        basename_text, _ = get_name_and_ext(clean_wav_path)
-        if basename_text in train_basename_texts:
-            shutil.copy(clean_wav_path, clean_wav_path.replace("test", "train"))
-            shutil.copy(noisy_wav_path, noisy_wav_path.replace("test", "train"))
-
-            train_store[basename_text] = test_store[basename_text]
-
-    print("Select train dataset finshed. Begin saving numpy object file...")
     np.save((release_dir / "train.npy").as_posix(), train_store)
     np.save((release_dir / "test.npy").as_posix(), test_store)
-    print(f"Build SE dataset finished, result In {release_dir}.")
+    print(f"Build SE dataset finished, the result is stored in {release_dir}. \n")
     print("You can use command line to transfer release data to remote dir: ")
     print('\t time tar -c <local_release_dir> | pv | lz4 -B4 | ssh user@ip "lz4 -d | tar -xC <remote_dir>"')
 
